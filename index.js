@@ -43,7 +43,7 @@ function parseMessage(body) {
 async function appendToSheet(data) {
   const now = new Date();
   const date = now.toLocaleDateString('id-ID');
-  const time = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  const time = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
   const month = now.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
   const week = `Week ${Math.ceil(now.getDate() / 7)}`;
 
