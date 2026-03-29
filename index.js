@@ -40,19 +40,63 @@ function getJakartaNow() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: TIME_ZONE }));
 }
 
-function parseIdDate(dateText) {
-  const parts = (dateText || '').split('/');
-  if (parts.length !== 3) return null;
+function toStartOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
 
-  const day = Number(parts[0]);
-  const month = Number(parts[1]);
-  const year = Number(parts[2]);
-  if (!day || !month || !year) return null;
+function createDateIfValid(year, month, day) {
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return toStartOfDay(date);
+}
 
-  const parsed = new Date(year, month - 1, day);
+function parseSheetDate(value) {
+  if (value === null || value === undefined || value === '') return null;
+
+  // When valueRenderOption=UNFORMATTED_VALUE, date cells often come as serial numbers.
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const millis = Math.round((value - 25569) * 86400 * 1000);
+    const parsed = new Date(millis);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return toStartOfDay(parsed);
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  const match = text.match(/^(\d{1,4})[\/\-](\d{1,2})[\/\-](\d{1,4})$/);
+  if (match) {
+    const a = Number(match[1]);
+    const b = Number(match[2]);
+    const c = Number(match[3]);
+
+    if (match[1].length === 4) {
+      return createDateIfValid(a, b, c);
+    }
+
+    if (match[3].length === 4) {
+      // Prefer dd/mm/yyyy (Indonesian), fallback to mm/dd/yyyy.
+      return createDateIfValid(c, b, a) || createDateIfValid(c, a, b);
+    }
+  }
+
+  const parsed = new Date(text);
   if (Number.isNaN(parsed.getTime())) return null;
-  parsed.setHours(0, 0, 0, 0);
-  return parsed;
+  return toStartOfDay(parsed);
+}
+
+function getMonthKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}`;
 }
 
 const spreadsheetId = getSpreadsheetIdFromEnv();
@@ -66,24 +110,76 @@ const sheets = google.sheets({ version: 'v4', auth });
 
 // Parse message format: "category amount notes"
 // Example: "makan 45000 nasi padang di warteg"
+function parseAmount(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(value);
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return 0;
+
+  // Keep only digits and optional leading minus sign (handles "Rp 45.000", "45,000", etc.)
+  const normalized = text.replace(/[^\d-]/g, '');
+  if (!normalized || normalized === '-') return 0;
+
+  const parsed = parseInt(normalized, 10);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 function parseMessage(body) {
   const parts = body.trim().split(/\s+/);
   if (parts.length < 2) return null;
 
   const category = parts[0].toLowerCase();
-  const amount = parseInt(parts[1], 10);
+  const amount = parseAmount(parts[1]);
   const notes = parts.slice(2).join(' ') || '-';
 
-  if (Number.isNaN(amount)) return null;
+  if (amount <= 0) return null;
   return { category, amount, notes };
 }
 
-async function getSheetRows() {
-  const response = await sheets.spreadsheets.values.get({
+async function getSheetRecords() {
+  const response = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    range: SHEET_RANGE,
+    ranges: ['Sheet1!A2:A', 'Sheet1!C2:C', 'Sheet1!D2:D', 'Sheet1!E2:E', 'Sheet1!F2:F'],
+    valueRenderOption: 'UNFORMATTED_VALUE',
+    dateTimeRenderOption: 'SERIAL_NUMBER',
   });
-  return response.data.values || [];
+
+  const [dates, categories, amounts, notes, months] = (response.data.valueRanges || []).map(
+    range => range.values || []
+  );
+
+  const maxRows = Math.max(
+    dates.length,
+    categories.length,
+    amounts.length,
+    notes.length,
+    months.length
+  );
+  const records = [];
+
+  for (let i = 0; i < maxRows; i += 1) {
+    const dateRaw = dates[i]?.[0] ?? '';
+    const category = String(categories[i]?.[0] ?? '').trim();
+    const amountRaw = amounts[i]?.[0] ?? '';
+    const notesRaw = String(notes[i]?.[0] ?? '').trim();
+    const monthRaw = String(months[i]?.[0] ?? '').trim();
+
+    if (!dateRaw && !category && !amountRaw && !notesRaw && !monthRaw) {
+      continue;
+    }
+
+    records.push({
+      date: parseSheetDate(dateRaw),
+      category: category || 'lainnya',
+      amount: parseAmount(amountRaw),
+      notes: notesRaw || '-',
+      monthText: monthRaw,
+    });
+  }
+
+  return records;
 }
 
 async function appendToSheet(data) {
@@ -106,11 +202,18 @@ async function appendToSheet(data) {
     },
   });
 
-  const allRows = await getSheetRows();
+  const allRows = await getSheetRecords();
+  const currentMonthKey = getMonthKey(now);
   let monthTotal = 0;
-  allRows.slice(1).forEach(row => {
-    if (row[5] === month) {
-      monthTotal += parseInt(row[3], 10) || 0;
+  allRows.forEach(record => {
+    if (record.date && getMonthKey(record.date) === currentMonthKey) {
+      monthTotal += record.amount;
+      return;
+    }
+
+    // Fallback for legacy rows without parseable date but with month text in column F.
+    if (!record.date && record.monthText === month) {
+      monthTotal += record.amount;
     }
   });
 
@@ -140,17 +243,24 @@ async function appendToSheet(data) {
 }
 
 async function getSummary() {
-  const rows = await getSheetRows();
-  const thisMonth = getJakartaNow().toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+  const rows = await getSheetRecords();
+  const now = getJakartaNow();
+  const thisMonth = now.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+  const thisMonthKey = getMonthKey(now);
 
   let total = 0;
   const byCategory = {};
-  rows.slice(1).forEach(row => {
-    if (row[5] === thisMonth) {
-      const amount = parseInt(row[3], 10) || 0;
-      const category = row[2] || 'lainnya';
-      total += amount;
-      byCategory[category] = (byCategory[category] || 0) + amount;
+  rows.forEach(record => {
+    if (record.date && getMonthKey(record.date) === thisMonthKey) {
+      total += record.amount;
+      byCategory[record.category] = (byCategory[record.category] || 0) + record.amount;
+      return;
+    }
+
+    // Fallback for legacy rows without parseable date but with month text in column F.
+    if (!record.date && record.monthText === thisMonth) {
+      total += record.amount;
+      byCategory[record.category] = (byCategory[record.category] || 0) + record.amount;
     }
   });
 
@@ -169,18 +279,18 @@ async function getSummary() {
   return summary;
 }
 
-async function getDailySummary(mode) {
-  const rows = await getSheetRows();
-  const today = getJakartaNow().toLocaleDateString('id-ID');
+async function getDailySummary() {
+  const rows = await getSheetRecords();
+  const todayDate = toStartOfDay(getJakartaNow());
+  const today = todayDate.toLocaleDateString('id-ID');
 
   let total = 0;
   const entries = [];
-  rows.slice(1).forEach(row => {
-    if (row[0] === today) {
-      const amount = parseInt(row[3], 10) || 0;
-      total += amount;
-      entries.push(`- ${row[2] || 'lainnya'}: Rp ${amount.toLocaleString('id-ID')} - ${row[4] || '-'}`);
-    }
+  rows.forEach(record => {
+    if (!record.date || record.date.getTime() !== todayDate.getTime()) return;
+
+    total += record.amount;
+    entries.push(`- ${record.category}: Rp ${record.amount.toLocaleString('id-ID')} - ${record.notes}`);
   });
 
   if (entries.length === 0) {
@@ -191,25 +301,21 @@ async function getDailySummary(mode) {
 }
 
 async function getWeeklySummary() {
-  const rows = await getSheetRows();
+  const rows = await getSheetRecords();
 
   const now = getJakartaNow();
-  const monday = new Date(now);
+  const monday = toStartOfDay(now);
   const dayOfWeek = monday.getDay(); // 0=Sunday, 1=Monday
   const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   monday.setDate(monday.getDate() - diffToMonday);
-  monday.setHours(0, 0, 0, 0);
 
   let total = 0;
   const byCategory = {};
-  rows.slice(1).forEach(row => {
-    const rowDate = parseIdDate(row[0]);
-    if (!rowDate || rowDate < monday || rowDate > now) return;
+  rows.forEach(record => {
+    if (!record.date || record.date < monday || record.date > now) return;
 
-    const amount = parseInt(row[3], 10) || 0;
-    const category = row[2] || 'lainnya';
-    total += amount;
-    byCategory[category] = (byCategory[category] || 0) + amount;
+    total += record.amount;
+    byCategory[record.category] = (byCategory[record.category] || 0) + record.amount;
   });
 
   if (Object.keys(byCategory).length === 0) {
@@ -248,7 +354,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (bodyLower === '/today') {
-      const summary = await getDailySummary('today');
+      const summary = await getDailySummary();
       twiml.message(summary);
       return res.type('text/xml').send(twiml.toString());
     }
