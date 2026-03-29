@@ -1,30 +1,5 @@
-# dependencies
 node_modules/
-
-# environment variables
 .env
-.env.*
-!.env.example
-
-# secrets / credentials
-google-credentials..json
-expense-bot-*.json
-
-# logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# build / coverage
-dist/
-build/
-coverage/
-
-# editor / OS files
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+*.json
+!package.json
+!package-lock.json
