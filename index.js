@@ -6,9 +6,22 @@ const twilio = require('twilio');
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 
+function getGoogleCredentialsFromEnv() {
+  const rawCredentials = process.env.GOOGLE_CREDENTIALS_JSON;
+  if (!rawCredentials) {
+    throw new Error('Missing GOOGLE_CREDENTIALS_JSON in environment variables.');
+  }
+
+  try {
+    return JSON.parse(rawCredentials);
+  } catch (err) {
+    throw new Error('GOOGLE_CREDENTIALS_JSON is not valid JSON. Use a single-line JSON string.');
+  }
+}
+
 // Google Sheets auth
 const auth = new google.auth.GoogleAuth({
-  keyFile: process.env.GOOGLE_CREDENTIALS,
+  credentials: getGoogleCredentialsFromEnv(),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 const sheets = google.sheets({ version: 'v4', auth });
