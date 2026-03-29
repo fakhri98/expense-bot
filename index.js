@@ -8,10 +8,10 @@ app.use(express.urlencoded({ extended: false }));
 
 const TIME_ZONE = 'Asia/Jakarta';
 const SHEET_RANGE = 'Sheet1!A:G';
-const MONTHLY_BUDGET_RAW = Number(process.env.MONTHLY_BUDGET || 3000000);
+const MONTHLY_BUDGET_RAW = Number(process.env.MONTHLY_BUDGET || 3245000);
 const MONTHLY_BUDGET = Number.isFinite(MONTHLY_BUDGET_RAW) && MONTHLY_BUDGET_RAW > 0
   ? MONTHLY_BUDGET_RAW
-  : 3000000;
+  : 3245000;
 
 function getGoogleCredentialsFromEnv() {
   const rawCredentials = process.env.GOOGLE_CREDENTIALS_JSON;
@@ -118,7 +118,7 @@ async function appendToSheet(data) {
 
   if (percent >= 100) {
     return (
-      `Tercatat. WARNING: Budget bulan ini sudah habis.\n` +
+      `✅ Tercatat! ⚠️ *Budget bulan ini sudah habis!\n` +
       `Total: Rp ${monthTotal.toLocaleString('id-ID')} / Rp ${MONTHLY_BUDGET.toLocaleString('id-ID')}`
     );
   }
@@ -128,12 +128,12 @@ async function appendToSheet(data) {
       `Tercatat.\n` +
       `- ${data.category}: Rp ${data.amount.toLocaleString('id-ID')}\n` +
       `- ${data.notes}\n\n` +
-      `WARNING: Budget bulan ini sudah ${percent}% terpakai.`
+      `✅ Tercatat! ⚠️ Budget bulan ini sudah ${percent}% terpakai.`
     );
   }
 
   return (
-    `Tercatat.\n` +
+    `✅ Tercatat!\n` +
     `- ${data.category}: Rp ${data.amount.toLocaleString('id-ID')}\n` +
     `- ${data.notes}`
   );
@@ -184,10 +184,10 @@ async function getDailySummary(mode) {
   });
 
   if (entries.length === 0) {
-    return 'Belum ada pengeluaran hari ini.';
+    return '📅 Belum ada pengeluaran hari ini.';
   }
 
-  return `Hari ini, ${today}\n\n${entries.join('\n')}\n\nTotal: Rp ${total.toLocaleString('id-ID')}`;
+  return `📅 Hari ini, ${today}\n\n${entries.join('\n')}\n\nTotal: Rp ${total.toLocaleString('id-ID')}`;
 }
 
 async function getWeeklySummary() {
@@ -216,7 +216,7 @@ async function getWeeklySummary() {
     return 'Belum ada pengeluaran minggu ini.';
   }
 
-  let summary = 'Minggu ini\n\n';
+  let summary = '📆 Minggu ini\n\n';
   Object.entries(byCategory)
     .sort((a, b) => b[1] - a[1])
     .forEach(([category, amount]) => {
@@ -235,7 +235,7 @@ app.post('/webhook', async (req, res) => {
   try {
     if (bodyLower === '/help' || bodyLower === 'help') {
       twiml.message(
-        `*Expense Bot - Cara Pakai*\n\n` +
+        `🤖 *Expense Bot - Cara Pakai*\n\n` +
           `*Catat pengeluaran:*\n_kategori jumlah keterangan_\nContoh: makan 45000 nasi padang\n\n` +
           `*Kategori umum:*\nmakan, transport, belanja, tagihan, hiburan, kesehatan, lainnya\n\n` +
           `*Perintah:*\n` +
